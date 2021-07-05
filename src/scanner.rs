@@ -1,13 +1,15 @@
+use std::char;
 use std::collections::VecDeque;
 use std::error::Error;
-use std::{char, fmt};
+use std::fmt::Display;
+use std::fmt::{self,};
 
-#[derive(Clone, Copy, PartialEq, Debug, Eq)]
+#[derive(Clone, Copy, PartialEq, Debug, Eq, PartialOrd, Ord, Hash)]
 pub enum TEncoding {
     Utf8,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Eq)]
+#[derive(Clone, Copy, PartialEq, Debug, Eq, PartialOrd, Ord, Hash)]
 pub enum TScalarStyle {
     Any,
     Plain,
@@ -85,7 +87,7 @@ impl fmt::Display for ScanError {
     }
 }
 
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, PartialEq, Debug, Eq, PartialOrd, Ord, Hash)]
 pub enum TokenType {
     NoToken,
     StreamStart(TEncoding),
@@ -112,6 +114,16 @@ pub enum TokenType {
     /// handle, suffix
     Tag(String, String),
     Scalar(TScalarStyle, String),
+}
+
+impl Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let TokenType::Tag(a, b) = self {
+            write!(f, "{}{}", a, b)
+        } else {
+            write!(f, "")
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Eq)]
