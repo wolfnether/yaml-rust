@@ -1,7 +1,11 @@
 use std::convert::From;
 use std::error::Error;
-use std::fmt::{self, Display};
-use crate::yaml::{Hash, Yaml};
+use std::fmt::Display;
+use std::fmt::{self,};
+
+use crate::scanner::TokenType;
+use crate::yaml::Hash;
+use crate::yaml::Yaml;
 
 #[derive(Copy, Clone, Debug)]
 pub enum EmitError {
@@ -150,31 +154,44 @@ impl<'a> YamlEmitter<'a> {
     }
 
     fn emit_node(&mut self, node: &Yaml) -> EmitResult {
-        match *node {
-            Yaml::Array(ref v) => self.emit_array(v),
-            Yaml::Hash(ref h) => self.emit_hash(h),
-            Yaml::String(ref v) => {
+        match node {
+            Yaml::Array(ref v, tag) => self.emit_array(v, tag.clone()),
+            Yaml::Hash(ref h, tag) => self.emit_hash(h, tag.clone()),
+            Yaml::String(ref v, tag) => {
                 if need_quotes(v) {
                     escape_str(self.writer, v)?;
+                } else {
+                    if tag.is_some() {
+                        write!(self.writer, "{} {}", tag.clone().unwrap(), v)?;
+                    } else {
+                        write!(self.writer, "{}", v)?;
+                    }
+                }
+                Ok(())
+            }
+            Yaml::Boolean(v, tag) => {
+                let v = if *v { "true" } else { "false" };
+                if tag.is_some() {
+                    write!(self.writer, "{} {}", tag.clone().unwrap(), v)?;
                 } else {
                     write!(self.writer, "{}", v)?;
                 }
                 Ok(())
             }
-            Yaml::Boolean(v) => {
-                if v {
-                    self.writer.write_str("true")?;
+            Yaml::Integer(v, tag) => {
+                if tag.is_some() {
+                    write!(self.writer, "{} {}", tag.clone().unwrap(), v)?;
                 } else {
-                    self.writer.write_str("false")?;
+                    write!(self.writer, "{}", v)?;
                 }
                 Ok(())
             }
-            Yaml::Integer(v) => {
-                write!(self.writer, "{}", v)?;
-                Ok(())
-            }
-            Yaml::Real(ref v) => {
-                write!(self.writer, "{}", v)?;
+            Yaml::Real(ref v, tag) => {
+                if tag.is_some() {
+                    write!(self.writer, "{} {}", tag.clone().unwrap(), v)?;
+                } else {
+                    write!(self.writer, "{}", v)?;
+                }
                 Ok(())
             }
             Yaml::Null | Yaml::BadValue => {
@@ -186,7 +203,10 @@ impl<'a> YamlEmitter<'a> {
         }
     }
 
-    fn emit_array(&mut self, v: &[Yaml]) -> EmitResult {
+    fn emit_array(&mut self, v: &[Yaml], tag: Option<TokenType>) -> EmitResult {
+        if tag.is_some() {
+            write!(self.writer, "{}", tag.unwrap())?;
+        }
         if v.is_empty() {
             write!(self.writer, "[]")?;
         } else {
@@ -204,14 +224,17 @@ impl<'a> YamlEmitter<'a> {
         Ok(())
     }
 
-    fn emit_hash(&mut self, h: &Hash) -> EmitResult {
+    fn emit_hash(&mut self, h: &Hash, tag: Option<TokenType>) -> EmitResult {
+        if tag.is_some() {
+            write!(self.writer, "{}", tag.unwrap())?;
+        }
         if h.is_empty() {
             self.writer.write_str("{}")?;
         } else {
             self.level += 1;
             for (cnt, (k, v)) in h.iter().enumerate() {
                 let complex_key = match *k {
-                    Yaml::Hash(_) | Yaml::Array(_) => true,
+                    Yaml::Hash(..) | Yaml::Array(..) => true,
                     _ => false,
                 };
                 if cnt > 0 {
@@ -241,8 +264,8 @@ impl<'a> YamlEmitter<'a> {
     /// If `inline` is true, then the preceding characters are distinct
     /// and short enough to respect the compact flag.
     fn emit_val(&mut self, inline: bool, val: &Yaml) -> EmitResult {
-        match *val {
-            Yaml::Array(ref v) => {
+        match val {
+            Yaml::Array(ref v, tag) => {
                 if (inline && self.compact) || v.is_empty() {
                     write!(self.writer, " ")?;
                 } else {
@@ -251,9 +274,9 @@ impl<'a> YamlEmitter<'a> {
                     self.write_indent()?;
                     self.level -= 1;
                 }
-                self.emit_array(v)
+                self.emit_array(v, tag.clone())
             }
-            Yaml::Hash(ref h) => {
+            Yaml::Hash(ref h, tag) => {
                 if (inline && self.compact) || h.is_empty() {
                     write!(self.writer, " ")?;
                 } else {
@@ -262,7 +285,7 @@ impl<'a> YamlEmitter<'a> {
                     self.write_indent()?;
                     self.level -= 1;
                 }
-                self.emit_hash(h)
+                self.emit_hash(h, tag.clone())
             }
             _ => {
                 write!(self.writer, " ")?;
@@ -631,5 +654,4 @@ a:
 
         assert_eq!(s, writer);
     }
-
 }
