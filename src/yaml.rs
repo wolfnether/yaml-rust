@@ -1,6 +1,3 @@
-use linked_hash_map::LinkedHashMap;
-use crate::parser::*;
-use crate::scanner::{Marker, ScanError, TScalarStyle, TokenType};
 use std::collections::BTreeMap;
 use std::f64;
 use std::i64;
@@ -8,6 +5,14 @@ use std::mem;
 use std::ops::Index;
 use std::string;
 use std::vec;
+
+use linked_hash_map::LinkedHashMap;
+
+use crate::parser::*;
+use crate::scanner::Marker;
+use crate::scanner::ScanError;
+use crate::scanner::TScalarStyle;
+use crate::scanner::TokenType;
 
 /// A YAML node is stored as this `Yaml` enumeration, which provides an easy way to
 /// access your YAML document.
@@ -29,19 +34,19 @@ use std::vec;
 pub enum Yaml {
     /// Float types are stored as String and parsed on demand.
     /// Note that f64 does NOT implement Eq trait and can NOT be stored in BTreeMap.
-    Real(string::String),
+    Real(string::String, Option<TokenType>),
     /// YAML int is stored as i64.
-    Integer(i64),
+    Integer(i64, Option<TokenType>),
     /// YAML scalar.
-    String(string::String),
+    String(string::String, Option<TokenType>),
     /// YAML bool, e.g. `true` or `false`.
-    Boolean(bool),
+    Boolean(bool, Option<TokenType>),
     /// YAML array, can be accessed as a `Vec`.
-    Array(self::Array),
+    Array(self::Array, Option<TokenType>),
     /// YAML hash, can be accessed as a `LinkedHashMap`.
     ///
     /// Insertion order will match the order of insertion into the map.
-    Hash(self::Hash),
+    Hash(self::Hash, Option<TokenType>),
     /// Alias, not fully supported yet.
     Alias(usize),
     /// YAML null, e.g. `null` or `~`.
@@ -90,15 +95,15 @@ impl MarkedEventReceiver for YamlLoader {
                     _ => unreachable!(),
                 }
             }
-            Event::SequenceStart(aid) => {
-                self.doc_stack.push((Yaml::Array(Vec::new()), aid));
+            Event::SequenceStart(aid, tag) => {
+                self.doc_stack.push((Yaml::Array(Vec::new(), tag), aid));
             }
             Event::SequenceEnd => {
                 let node = self.doc_stack.pop().unwrap();
                 self.insert_new_node(node);
             }
-            Event::MappingStart(aid) => {
-                self.doc_stack.push((Yaml::Hash(Hash::new()), aid));
+            Event::MappingStart(aid, tag) => {
+                self.doc_stack.push((Yaml::Hash(Hash::new(), tag), aid));
                 self.key_stack.push(Yaml::BadValue);
             }
             Event::MappingEnd => {
@@ -108,7 +113,7 @@ impl MarkedEventReceiver for YamlLoader {
             }
             Event::Scalar(v, style, aid, tag) => {
                 let node = if style != TScalarStyle::Plain {
-                    Yaml::String(v)
+                    Yaml::String(v, tag)
                 } else if let Some(TokenType::Tag(ref handle, ref suffix)) = tag {
                     // XXX tag:yaml.org,2002:
                     if handle == "!!" {
@@ -117,29 +122,29 @@ impl MarkedEventReceiver for YamlLoader {
                                 // "true" or "false"
                                 match v.parse::<bool>() {
                                     Err(_) => Yaml::BadValue,
-                                    Ok(v) => Yaml::Boolean(v),
+                                    Ok(v) => Yaml::Boolean(v, tag),
                                 }
                             }
                             "int" => match v.parse::<i64>() {
                                 Err(_) => Yaml::BadValue,
-                                Ok(v) => Yaml::Integer(v),
+                                Ok(v) => Yaml::Integer(v, tag),
                             },
                             "float" => match parse_f64(&v) {
-                                Some(_) => Yaml::Real(v),
+                                Some(_) => Yaml::Real(v, tag),
                                 None => Yaml::BadValue,
                             },
                             "null" => match v.as_ref() {
                                 "~" | "null" => Yaml::Null,
                                 _ => Yaml::BadValue,
                             },
-                            _ => Yaml::String(v),
+                            _ => Yaml::String(v, tag),
                         }
                     } else {
-                        Yaml::String(v)
+                        Yaml::String(v, tag)
                     }
                 } else {
                     // Datatype is not specified, or unrecognized
-                    Yaml::from_str(&v)
+                    Yaml::from_str(&v, tag)
                 };
 
                 self.insert_new_node((node, aid));
@@ -168,8 +173,8 @@ impl YamlLoader {
         } else {
             let parent = self.doc_stack.last_mut().unwrap();
             match *parent {
-                (Yaml::Array(ref mut v), _) => v.push(node.0),
-                (Yaml::Hash(ref mut h), _) => {
+                (Yaml::Array(ref mut v, _), _) => v.push(node.0),
+                (Yaml::Hash(ref mut h, _), _) => {
                     let cur_key = self.key_stack.last_mut().unwrap();
                     // current node is a key
                     if cur_key.is_badvalue() {
@@ -203,7 +208,7 @@ macro_rules! define_as (
     ($name:ident, $t:ident, $yt:ident) => (
 pub fn $name(&self) -> Option<$t> {
     match *self {
-        Yaml::$yt(v) => Some(v),
+        Yaml::$yt(v,_) => Some(v),
         _ => None
     }
 }
@@ -214,7 +219,7 @@ macro_rules! define_as_ref (
     ($name:ident, $t:ty, $yt:ident) => (
 pub fn $name(&self) -> Option<$t> {
     match *self {
-        Yaml::$yt(ref v) => Some(v),
+        Yaml::$yt(ref v,_) => Some(v),
         _ => None
     }
 }
@@ -225,7 +230,7 @@ macro_rules! define_into (
     ($name:ident, $t:ty, $yt:ident) => (
 pub fn $name(self) -> Option<$t> {
     match self {
-        Yaml::$yt(v) => Some(v),
+        Yaml::$yt(v,_) => Some(v),
         _ => None
     }
 }
@@ -262,21 +267,33 @@ impl Yaml {
 
     pub fn is_array(&self) -> bool {
         match *self {
-            Yaml::Array(_) => true,
+            Yaml::Array(..) => true,
             _ => false,
         }
     }
 
     pub fn as_f64(&self) -> Option<f64> {
         match *self {
-            Yaml::Real(ref v) => parse_f64(v),
+            Yaml::Real(ref v, _) => parse_f64(v),
             _ => None,
         }
     }
 
     pub fn into_f64(self) -> Option<f64> {
         match self {
-            Yaml::Real(ref v) => parse_f64(v),
+            Yaml::Real(ref v, _) => parse_f64(v),
+            _ => None,
+        }
+    }
+
+    pub fn get_tag(&self) -> Option<TokenType> {
+        match self {
+            Yaml::Real(_, tag)
+            | Yaml::Integer(_, tag)
+            | Yaml::String(_, tag)
+            | Yaml::Boolean(_, tag)
+            | Yaml::Array(_, tag)
+            | Yaml::Hash(_, tag) => tag.clone(),
             _ => None,
         }
     }
@@ -286,30 +303,30 @@ impl Yaml {
 impl Yaml {
     // Not implementing FromStr because there is no possibility of Error.
     // This function falls back to Yaml::String if nothing else matches.
-    pub fn from_str(v: &str) -> Yaml {
+    pub fn from_str(v: &str, tag: Option<TokenType>) -> Yaml {
         if v.starts_with("0x") {
             if let Ok(i) = i64::from_str_radix(&v[2..], 16) {
-                return Yaml::Integer(i);
+                return Yaml::Integer(i, tag);
             }
         }
         if v.starts_with("0o") {
             if let Ok(i) = i64::from_str_radix(&v[2..], 8) {
-                return Yaml::Integer(i);
+                return Yaml::Integer(i, tag);
             }
         }
         if v.starts_with('+') {
             if let Ok(i) = v[1..].parse::<i64>() {
-                return Yaml::Integer(i);
+                return Yaml::Integer(i, tag);
             }
         }
         match v {
             "~" | "null" => Yaml::Null,
-            "true" => Yaml::Boolean(true),
-            "false" => Yaml::Boolean(false),
-            _ if v.parse::<i64>().is_ok() => Yaml::Integer(v.parse::<i64>().unwrap()),
+            "true" => Yaml::Boolean(true, tag),
+            "false" => Yaml::Boolean(false, tag),
+            _ if v.parse::<i64>().is_ok() => Yaml::Integer(v.parse::<i64>().unwrap(), tag),
             // try parsing as f64
-            _ if parse_f64(v).is_some() => Yaml::Real(v.to_owned()),
-            _ => Yaml::String(v.to_owned()),
+            _ if parse_f64(v).is_some() => Yaml::Real(v.to_owned(), tag),
+            _ => Yaml::String(v.to_owned(), tag),
         }
     }
 }
@@ -319,7 +336,7 @@ impl<'a> Index<&'a str> for Yaml {
     type Output = Yaml;
 
     fn index(&self, idx: &'a str) -> &Yaml {
-        let key = Yaml::String(idx.to_owned());
+        let key = Yaml::String(idx.to_owned(), None);
         match self.as_hash() {
             Some(h) => h.get(&key).unwrap_or(&BAD_VALUE),
             None => &BAD_VALUE,
@@ -334,7 +351,7 @@ impl Index<usize> for Yaml {
         if let Some(v) = self.as_vec() {
             v.get(idx).unwrap_or(&BAD_VALUE)
         } else if let Some(v) = self.as_hash() {
-            let key = Yaml::Integer(idx as i64);
+            let key = Yaml::Integer(idx as i64, None);
             v.get(&key).unwrap_or(&BAD_VALUE)
         } else {
             &BAD_VALUE
@@ -368,6 +385,7 @@ impl Iterator for YamlIter {
 #[cfg(test)]
 mod test {
     use std::f64;
+
     use crate::yaml::*;
     #[test]
     fn test_coerce() {
@@ -546,7 +564,7 @@ a1: &DEFAULT
         assert!(YamlLoader::load_from_str("---This used to cause an infinite loop").is_ok());
         assert_eq!(
             YamlLoader::load_from_str("----"),
-            Ok(vec![Yaml::String(String::from("----"))])
+            Ok(vec![Yaml::String(String::from("----"), None)])
         );
         assert_eq!(
             YamlLoader::load_from_str("--- #here goes a comment"),
@@ -554,7 +572,7 @@ a1: &DEFAULT
         );
         assert_eq!(
             YamlLoader::load_from_str("---- #here goes a comment"),
-            Ok(vec![Yaml::String(String::from("----"))])
+            Ok(vec![Yaml::String(String::from("----"), None)])
         );
     }
 
@@ -618,15 +636,15 @@ c: ~
         let first = out.into_iter().next().unwrap();
         let mut iter = first.into_hash().unwrap().into_iter();
         assert_eq!(
-            Some((Yaml::String("b".to_owned()), Yaml::Null)),
+            Some((Yaml::String("b".to_owned(), None), Yaml::Null)),
             iter.next()
         );
         assert_eq!(
-            Some((Yaml::String("a".to_owned()), Yaml::Null)),
+            Some((Yaml::String("a".to_owned(), None), Yaml::Null)),
             iter.next()
         );
         assert_eq!(
-            Some((Yaml::String("c".to_owned()), Yaml::Null)),
+            Some((Yaml::String("c".to_owned(), None), Yaml::Null)),
             iter.next()
         );
         assert_eq!(None, iter.next());
