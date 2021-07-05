@@ -1,5 +1,6 @@
-use crate::scanner::*;
 use std::collections::HashMap;
+
+use crate::scanner::*;
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 enum State {
@@ -44,10 +45,10 @@ pub enum Event {
     /// Value, style, anchor_id, tag
     Scalar(String, TScalarStyle, usize, Option<TokenType>),
     /// Anchor ID
-    SequenceStart(usize),
+    SequenceStart(usize, Option<TokenType>),
     SequenceEnd,
     /// Anchor ID
-    MappingStart(usize),
+    MappingStart(usize, Option<TokenType>),
     MappingEnd,
 }
 
@@ -233,11 +234,11 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 recv.on_event(first_ev, mark);
                 Ok(())
             }
-            Event::SequenceStart(_) => {
+            Event::SequenceStart(..) => {
                 recv.on_event(first_ev, mark);
                 self.load_sequence(recv)
             }
-            Event::MappingStart(_) => {
+            Event::MappingStart(..) => {
                 recv.on_event(first_ev, mark);
                 self.load_mapping(recv)
             }
@@ -367,7 +368,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
     fn parser_process_directives(&mut self) -> Result<(), ScanError> {
         loop {
             match self.peek_token()?.1 {
-                TokenType::VersionDirective(_, _) => {
+                TokenType::VersionDirective(..) => {
                     // XXX parsing with warning according to spec
                     //if major != 1 || minor > 2 {
                     //    return Err(ScanError::new(tok.0,
@@ -497,7 +498,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEntry) if indentless_sequence => {
                 self.state = State::IndentlessSequenceEntry;
-                Ok((Event::SequenceStart(anchor_id), mark))
+                Ok((Event::SequenceStart(anchor_id, tag), mark))
             }
             Token(_, TokenType::Scalar(..)) => {
                 self.pop_state();
@@ -509,19 +510,19 @@ impl<T: Iterator<Item = char>> Parser<T> {
             }
             Token(mark, TokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
-                Ok((Event::SequenceStart(anchor_id), mark))
+                Ok((Event::SequenceStart(anchor_id, tag), mark))
             }
             Token(mark, TokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
-                Ok((Event::MappingStart(anchor_id), mark))
+                Ok((Event::MappingStart(anchor_id, tag), mark))
             }
             Token(mark, TokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
-                Ok((Event::SequenceStart(anchor_id), mark))
+                Ok((Event::SequenceStart(anchor_id, tag), mark))
             }
             Token(mark, TokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
-                Ok((Event::MappingStart(anchor_id), mark))
+                Ok((Event::MappingStart(anchor_id, tag), mark))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
             Token(mark, _) if tag.is_some() || anchor_id > 0 => {
@@ -718,7 +719,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
             Token(mark, TokenType::Key) => {
                 self.state = State::FlowSequenceEntryMappingKey;
                 self.skip();
-                Ok((Event::MappingStart(0), mark))
+                Ok((Event::MappingStart(0, None), mark))
             }
             _ => {
                 self.push_state(State::FlowSequenceEntry);
@@ -831,7 +832,8 @@ impl<T: Iterator<Item = char>> Parser<T> {
 
 #[cfg(test)]
 mod test {
-    use super::{Event, Parser};
+    use super::Event;
+    use super::Parser;
 
     #[test]
     fn test_peek_eq_parse() {
