@@ -52,10 +52,12 @@ pub mod scanner;
 pub mod yaml;
 
 // reexport key APIs
-pub use crate::emitter::{EmitError, YamlEmitter};
+pub use crate::emitter::EmitError;
+pub use crate::emitter::YamlEmitter;
 pub use crate::parser::Event;
 pub use crate::scanner::ScanError;
-pub use crate::yaml::{Yaml, YamlLoader};
+pub use crate::yaml::Yaml;
+pub use crate::yaml::YamlLoader;
 
 #[cfg(test)]
 mod tests {
@@ -117,5 +119,4 @@ key1:a2
         assert!(YamlLoader::load_from_str(s).is_err());
         assert!(try_fail(s).is_err());
     }
-
 }
