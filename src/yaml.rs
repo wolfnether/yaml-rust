@@ -286,14 +286,15 @@ impl Yaml {
         }
     }
 
-    pub fn get_tag(&self) -> Option<TokenType> {
+    pub fn get_tag(&self) -> Option<&str> {
         match self {
             Yaml::Real(_, tag)
             | Yaml::Integer(_, tag)
             | Yaml::String(_, tag)
             | Yaml::Boolean(_, tag)
             | Yaml::Array(_, tag)
-            | Yaml::Hash(_, tag) => tag.clone(),
+            | Yaml::Hash(_, tag) => if let Some(TokenType::Tag(_,b)) = tag{Some(b)} else {None}
+                ,
             _ => None,
         }
     }
